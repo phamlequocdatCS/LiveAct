@@ -15,6 +15,7 @@ from typing import Dict, Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, ValidationError
+import websockets
 
 # --- Add MuseTalk directory to sys.path ---
 LIPSYNC_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -28,13 +29,13 @@ try:
     from MuseTalk.musetalk_adapter_realtime import RealtimeMuseTalkProcessor
 
     # MuseTalk's core model loading and utility functions
-    from MuseTalk.musetalk.utils.utils import load_all_model
-    from MuseTalk.musetalk.utils.audio_processor import AudioProcessor
-    from MuseTalk.musetalk.utils.face_parsing import FaceParsing
+    from musetalk.utils.utils import load_all_model
+    from musetalk.utils.audio_processor import AudioProcessor
+    from musetalk.utils.face_parsing import FaceParsing
     from transformers import WhisperModel
     import torch # For device checks
     import cv2 # For JPEG encoding of frames
-    from PIL import Image # For image handling
+    from PIL import Image # For image handling (though not directly used in latest inference)
     
 except ImportError as e:
     print(f"CRITICAL ERROR: Could not import MuseTalk adapters or core modules: {e}")
@@ -54,7 +55,6 @@ realtime_args_config: SimpleNamespace = SimpleNamespace()
 musetalk_batch_generator_instance: MuseTalkBatchGenerator = None
 active_stream_sessions: Dict[str, RealtimeMuseTalkProcessor] = {} # {session_id: processor_instance}
 
-common_cfg = None
 
 # --- FastAPI Lifespan Events for Model Loading ---
 @asynccontextmanager
@@ -63,61 +63,73 @@ async def lifespan(app: FastAPI):
 
     print("FastAPI application startup...")
     try:
-       # --- 1. Define common configuration for MuseTalk models ---
+        # --- 1. Define common configuration for MuseTalk models ---
         common_cfg = SimpleNamespace()
         common_cfg.gpu_id = 0 # Matches inference.py default
         common_cfg.vae_type = "sd-vae" # Matches inference.py default
         common_cfg.unet_model_path = os.path.join("models", "musetalkV15", "unet.pth")
-        # >>> CRITICAL CORRECTION: This MUST match inference.py's default UNet config path
         common_cfg.unet_config = os.path.join("models", "musetalkV15", "musetalk.json")
         common_cfg.whisper_dir = os.path.join("models", "whisper") # Matches inference.py default
-        # >>> CRITICAL CORRECTION: inference.py's --use_float16 is an ACTION_STORE_TRUE, so it's FALSE by default.
-        common_cfg.use_float16 = True # <--- CORRECTED: MUST MATCH inference.py DEFAULT (unless you explicitly set --use_float16 for inference.py)
+        common_cfg.use_float16 = False # Set to True for faster inference, matches app.py default
 
-        # Check critical file paths relative to MUSE_TALK_DIR (ensure these exist as relative to MuseTalk directory)
+        # Determine device and store it in shared_models for global access
+        shared_models.device_str = f"cuda:{common_cfg.gpu_id}" if torch.cuda.is_available() else "cpu"
+        shared_models.device = torch.device(shared_models.device_str)
+
+        # Check critical file paths relative to MUSE_TALK_DIR
         abs_unet_model_path = os.path.join(MUSE_TALK_DIR, common_cfg.unet_model_path)
-        abs_unet_config = os.path.join(MUSE_TALK_DIR, common_cfg.unet_config) # This now points to models/musetalk/config.json
-        abs_vae_path = os.path.join(MUSE_TALK_DIR, "models", common_cfg.vae_type)
+        abs_unet_config = os.path.join(MUSE_TALK_DIR, common_cfg.unet_config)
+        # Note: vae_type like "sd-vae" maps to a directory name, config is inside.
+        abs_vae_config_path = os.path.join(MUSE_TALK_DIR, "models", common_cfg.vae_type, "config.json")
         abs_whisper_dir = os.path.join(MUSE_TALK_DIR, common_cfg.whisper_dir)
         abs_face_parse_model_pth = os.path.join(MUSE_TALK_DIR, 'models', 'face-parse-bisent', '79999_iter.pth')
         abs_face_parse_resnet_path = os.path.join(MUSE_TALK_DIR, 'models', 'face-parse-bisent', 'resnet18-5c106cde.pth')
 
-        for path_to_check in [abs_unet_model_path, abs_unet_config, abs_vae_path, abs_whisper_dir, abs_face_parse_model_pth, abs_face_parse_resnet_path]:
+        for path_to_check in [abs_unet_model_path, abs_unet_config, abs_vae_config_path, abs_whisper_dir, abs_face_parse_model_pth, abs_face_parse_resnet_path]:
             if not os.path.exists(path_to_check):
                 raise FileNotFoundError(f"MuseTalk critical file/dir not found at application startup: {path_to_check}")
 
-         # --- 2. Load common models once ---
+        # --- 2. Load common models once ---
         print("Loading shared MuseTalk models (VAE, UNet, PE, Whisper, FaceParser)...")
         shared_models.vae, shared_models.unet, shared_models.pe = load_all_model(
-            unet_model_path=common_cfg.unet_model_path,
+            unet_model_path=abs_unet_model_path, # Use absolute path here
             vae_type=common_cfg.vae_type,
-            unet_config=common_cfg.unet_config,
-            device=f"cuda:{common_cfg.gpu_id}" if torch.cuda.is_available() else "cpu",
-            use_float16=common_cfg.use_float16 # <-- PASS THIS NEW PARAMETER
+            unet_config=abs_unet_config, # Use absolute path here
+            device=shared_models.device_str, # Use shared_models.device_str
+            use_float16=common_cfg.use_float16
         )
         
+        # Determine and store the weight_dtype
+        shared_models.weight_dtype = torch.float16 if common_cfg.use_float16 else torch.float32
+
+        # Apply precision conversion for PE and UNet if use_float16 is true
         if common_cfg.use_float16:
-            print("Applying float16 precision to UNet and PE...")
+            print("Applying float16 precision to PE and UNet...")
             shared_models.pe = shared_models.pe.half()
             shared_models.unet.model = shared_models.unet.model.half()
-            print("UNet and PE converted to float16.")
+            print("PE and UNet converted to float16.")
         else:
-            print("Running UNet and PE in float32 precision.")
+            print("Running PE and UNet in float32 precision.")
+
+        # Move to device (ensure they are on correct device after half() conversion)
+        shared_models.pe = shared_models.pe.to(shared_models.device)
+        shared_models.vae.vae = shared_models.vae.vae.to(shared_models.device)
+        shared_models.unet.model = shared_models.unet.model.to(shared_models.device)
 
 
         shared_models.audio_processor = AudioProcessor(
-            feature_extractor_path=os.path.join(MUSE_TALK_DIR, common_cfg.whisper_dir) # Absolute path here, as AudioProcessor is outside MuseTalk's internal resolution
+            feature_extractor_path=abs_whisper_dir # Use absolute path
         )
         # Initialize WhisperModel using the path to the directory
         shared_models.whisper = WhisperModel.from_pretrained(
-            os.path.join(MUSE_TALK_DIR, common_cfg.whisper_dir) # Absolute path here
+            abs_whisper_dir # Use absolute path
         )
         shared_models.whisper = shared_models.whisper.to(
-            device=f"cuda:{common_cfg.gpu_id}" if torch.cuda.is_available() else "cpu",
-            dtype=shared_models.unet.model.dtype
+            device=shared_models.device, # Use shared_models.device
+            dtype=shared_models.weight_dtype # Use the stored weight_dtype
         ).eval().requires_grad_(False)
 
-        # FaceParsing (also needs absolute path handling in its __init__.py, which we patched)
+        # FaceParsing (already patched to handle absolute paths internally)
         shared_models.face_parser = FaceParsing(
             left_cheek_width=90, # Default, can be exposed in config if needed
             right_cheek_width=90
@@ -125,48 +137,55 @@ async def lifespan(app: FastAPI):
         print("Shared MuseTalk models loaded successfully.")
 
         # --- 3. Configure and Initialize Batch Mode Generator ---
-        batch_args_config.fps = 25 # Matches inference.py default
-        batch_args_config.audio_padding_length_left = 2 # Matches inference.py default
-        batch_args_config.audio_padding_length_right = 2 # Matches inference.py default
-        batch_args_config.batch_size = 8 # Matches inference.py default
-        batch_args_config.version = "v15" # Matches inference.py default
-        batch_args_config.bbox_shift = 0 # Matches inference.py default
-        batch_args_config.extra_margin = 10 # Matches inference.py default
-        # >>> CRITICAL CORRECTION: This MUST match inference.py's default
-        batch_args_config.parsing_mode = 'jaw' # <--- CORRECTED: MUST MATCH inference.py DEFAULT
+        batch_args_config.fps = 25
+        batch_args_config.audio_padding_length_left = 2
+        batch_args_config.audio_padding_length_right = 2
+        batch_args_config.batch_size = 8
+        batch_args_config.version = "v15"
+        batch_args_config.bbox_shift = 0
+        batch_args_config.extra_margin = 10
+        batch_args_config.parsing_mode = 'jaw'
         
         musetalk_batch_generator_instance = MuseTalkBatchGenerator(
             args_config=batch_args_config,
             preloaded_models=shared_models,
-            device=f"cuda:{common_cfg.gpu_id}" if torch.cuda.is_available() else "cpu"
+            device=shared_models.device_str # Use shared_models.device_str
         )
         print("Batch Mode Generator initialized.")
 
         # --- 4. Configure Real-Time Mode Parameters ---
-        realtime_args_config.fps = 25 # Matches inference.py default
-        realtime_args_config.audio_padding_length_left = 2 # Matches inference.py default
-        realtime_args_config.audio_padding_length_right = 2 # Matches inference.py default
-        realtime_args_config.batch_size = 1 # Keep this for realtime, different from batch but makes sense.
-        realtime_args_config.version = "v15" # Matches inference.py default
-        realtime_args_config.bbox_shift = 0 # Matches inference.py default
-        realtime_args_config.extra_margin = 10 # Matches inference.py default
-        # >>> CRITICAL CORRECTION: This MUST match inference.py's default
-        realtime_args_config.parsing_mode = 'jaw' # <--- CORRECTED: MUST MATCH inference.py DEFAULT
+        realtime_args_config.fps = 25
+        realtime_args_config.audio_padding_length_left = 2
+        realtime_args_config.audio_padding_length_right = 2
+        realtime_args_config.batch_size = 1 # Keep this for realtime, process one audio chunk at a time
+        realtime_args_config.version = "v15"
+        realtime_args_config.bbox_shift = 0
+        realtime_args_config.extra_margin = 10
+        realtime_args_config.parsing_mode = 'jaw'
 
     except Exception as e:
         print(f"CRITICAL ERROR: Failed to load MuseTalk models or initialize generators: {e}")
-        # In a real application, you might want to raise an exception or mark the app as unhealthy
-        # For now, we'll let it try to continue but the models will be None
         musetalk_batch_generator_instance = None
-        shared_models = None # Indicate failure
-        sys.exit(1) # Exit if models can't be loaded
+        shared_models.vae = None # Set components to None to indicate failure
+        shared_models.unet = None
+        shared_models.pe = None
+        shared_models.audio_processor = None
+        shared_models.whisper = None
+        shared_models.face_parser = None
+        shared_models.device = None
+        shared_models.device_str = None
+        # Do NOT sys.exit() here, let the app start but fail on requests
+        # This allows you to inspect the app state.
 
     yield # Application runs after this
 
     # --- Application shutdown ---
     print("FastAPI application shutdown...")
-    for session_id, processor in active_stream_sessions.items():
-        processor.cleanup() # Clean up any remaining session temp dirs
+    # Make a copy of items for safe iteration if sessions can be modified during cleanup
+    for session_id, processor in list(active_stream_sessions.items()):
+        if processor: # Check if processor is not None (it might have been popped already)
+            await asyncio.to_thread(processor.cleanup)
+    active_stream_sessions.clear() # Clear the dictionary
     # No explicit cleanup for shared_models needed, Python's GC will handle it on exit
 
 
@@ -235,7 +254,7 @@ html = """
             <p>Streaming is more complex and best tested with a dedicated client script.</p>
             <p>This demo only shows the init message response.</p>
             <p>Paste Base64 of a person image for stream init:</p>
-            <textarea id="streamImageBase64" rows="5" placeholder="Base64 image string (e.g., from small PNG/JPG)"></textarea>
+            <textarea id="streamImageBase66" rows="5" placeholder="Base64 image string (e.g., from small PNG/JPG)"></textarea>
             <button onclick="sendStreamInit()">Send Stream Init</button>
             <h3>Stream Response:</h3>
             <div id="streamMessages" style="height: 100px; overflow-y: scroll; border: 1px solid #eee;"></div>
@@ -311,7 +330,7 @@ html = """
                     alert("Stream WebSocket not open. Try again in a moment.");
                     return;
                 }
-                const imageB64 = document.getElementById("streamImageBase64").value;
+                const imageB64 = document.getElementById("streamImageBase66").value;
                 if (!imageB64) {
                     alert("Please provide an image base64 string for stream init.");
                     return;
@@ -335,9 +354,9 @@ async def websocket_lipsync_batch_endpoint(websocket: WebSocket):
     print("Client connected to batch lipsync endpoint.")
     try:
         while True:
-            if musetalk_batch_generator_instance is None:
-                print("Batch generator not initialized. Sending error.")
-                await websocket.send_json({"status": "error", "message": "Server models not loaded. Please check server logs."})
+            if shared_models.vae is None: # Check if models failed to load
+                print("Batch generator models not initialized. Sending error.")
+                await websocket.send_json({"status": "error", "message": "Server models not loaded. Please check server logs for critical errors during startup."})
                 await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
                 break
 
@@ -438,9 +457,9 @@ async def websocket_lipsync_stream_endpoint(websocket: WebSocket):
                 await websocket.send_json({"status": "error", "message": "Invalid JSON format."})
                 continue
 
-            if shared_models is None:
+            if shared_models.vae is None: # Check if models failed to load
                 print("Stream: Shared models not loaded. Sending error.")
-                await websocket.send_json({"status": "error", "message": "Server models not loaded. Please check server logs."})
+                await websocket.send_json({"status": "error", "message": "Server models not loaded. Please check server logs for critical errors during startup."})
                 await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
                 break
 
@@ -462,7 +481,7 @@ async def websocket_lipsync_stream_endpoint(websocket: WebSocket):
                         image_bytes=image_bytes,
                         session_id=client_session_id,
                         temp_base_dir=TEMP_BASE_DIR,
-                        device=f"cuda:{common_cfg.gpu_id}" if torch.cuda.is_available() else "cpu"
+                        device=shared_models.device_str # Use shared_models.device_str
                     )
                     active_stream_sessions[client_session_id] = processor
                     await websocket.send_json({"type": "init_response", "status": "success", "session_id": client_session_id, "message": "Processor initialized. Send audio chunks."})
@@ -493,10 +512,12 @@ async def websocket_lipsync_stream_endpoint(websocket: WebSocket):
                     generated_frames_np = await asyncio.to_thread(processor.process_audio_chunk, audio_chunk_bytes)
                     print(f"Stream: Generated {len(generated_frames_np)} frames for session {current_session_id}.")
 
-                    # Encode frames to base64 JPEG and send
+                    # RealtimeMuseTalkProcessor.process_audio_chunk returns frames in BGR format.
+                    # cv2.imencode expects BGR. So, no conversion is needed here.
                     frames_base64 = []
-                    for frame_np in generated_frames_np:
-                        _, buffer = cv2.imencode('.jpg', frame_np, [int(cv2.IMWRITE_JPEG_QUALITY), 85]) # Encode as JPEG
+                    for frame_np_bgr_from_adapter in generated_frames_np: # This is BGR
+                        # frame_bgr = cv2.cvtColor(frame_np_rgb, cv2.COLOR_RGB2BGR) # REMOVED: This was incorrect
+                        _, buffer = cv2.imencode('.jpg', frame_np_bgr_from_adapter, [int(cv2.IMWRITE_JPEG_QUALITY), 85]) # Encode BGR as JPEG
                         frames_base64.append(base64.b64encode(buffer).decode('utf-8'))
                     
                     await websocket.send_json({
@@ -519,8 +540,9 @@ async def websocket_lipsync_stream_endpoint(websocket: WebSocket):
                     end_data = LipSyncStreamEndInput.model_validate(message)
                     current_session_id = end_data.session_id
                     if current_session_id in active_stream_sessions:
-                        processor = active_stream_sessions.pop(current_session_id) # Remove from active sessions
-                        await asyncio.to_thread(processor.cleanup) # Clean up temp files
+                        processor_to_remove = active_stream_sessions.pop(current_session_id, None) # Remove from active sessions, default to None if not found
+                        if processor_to_remove:
+                            await asyncio.to_thread(processor_to_remove.cleanup) # Clean up temp files
                         print(f"Stream: Session {current_session_id} ended and cleaned up.")
                         await websocket.send_json({"type": "end_response", "status": "success", "session_id": current_session_id, "message": "Stream ended. Resources released."})
                     else:
@@ -540,15 +562,18 @@ async def websocket_lipsync_stream_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         print(f"Stream: Client disconnected from stream endpoint. Session: {client_session_id}")
         if client_session_id and client_session_id in active_stream_sessions:
-            processor = active_stream_sessions.pop(client_session_id)
-            await asyncio.to_thread(processor.cleanup)
+            processor_on_disconnect = active_stream_sessions.pop(client_session_id, None)
+            if processor_on_disconnect:
+                await asyncio.to_thread(processor_on_disconnect.cleanup)
             print(f"Stream: Cleaned up session {client_session_id} due to disconnect.")
     except Exception as e:
         print(f"Stream: An unexpected error occurred in websocket_lipsync_stream_endpoint: {e}")
         try:
-            await websocket.send_json({"status": "error", "message": "An unexpected server error occurred."})
-        except:
-            pass # Socket likely broken if sending fails
+            if websocket.application_state == websockets.WebSocketState.OPEN: # Check if socket is still open
+                 await websocket.send_json({"status": "error", "message": "An unexpected server error occurred."})
+        except Exception as send_err:
+            print(f"Stream: Failed to send error on broken socket: {send_err}")
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

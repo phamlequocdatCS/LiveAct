@@ -6,11 +6,14 @@ LiveAct is a demonstration project for a lip-syncing API that uses a Generative 
 
 Gradio UI
 
+Powered by MuseTalk: <https://github.com/TMElyralab/MuseTalk>
+
 - [LiveAct](#liveact)
   - [Objective](#objective)
   - [System Overview](#system-overview)
   - [Pretrained Models](#pretrained-models)
   - [Docker Setup (Server)](#docker-setup-server)
+  - [NVIDIA GPU Drivers Setup](#nvidia-gpu-drivers-setup)
   - [Client Setup (Local)](#client-setup-local)
   - [Local setup](#local-setup)
   - [Running and Testing the API](#running-and-testing-the-api)
@@ -107,6 +110,30 @@ docker stop musetalk-api-test
 
 # Clean Docker build cache (if you need to free up space or force rebuild layers)
 docker builder prune
+```
+
+## NVIDIA GPU Drivers Setup
+
+```bash
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# Add the GPG key
+curl -s -L https://nvidia.github.io/libnvidia-container/gpgkey | sudo apt-key add -
+
+# Update package lists
+sudo apt-get update
+
+# Install the NVIDIA Container Toolkit
+sudo apt-get install -y nvidia-container-toolkit
+
+# Configure the Docker daemon (Path might vary slightly, check official docs if this fails)
+sudo nvidia-container-toolkit -d /usr/bin/docker-current
+
+# Restart the Docker daemon (or restart Docker Desktop/WSL)
+sudo systemctl restart docker # Or service docker restart
+
+# Test driver install
+docker run --rm --gpus all nvidia/cuda:11.8.0-runtime-ubuntu22.04 nvidia-smi
 ```
 
 After starting the container, the API server will be accessible at `ws://localhost:8000/ws/lipsync/batch` and a simple HTML test page at `http://localhost:8000/`.

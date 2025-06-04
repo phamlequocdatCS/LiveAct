@@ -1,6 +1,8 @@
 # MuseTalk
 MuseTalk/models/*
 temp_files/*
+deprecated/*
+client_temp_files_gradio/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

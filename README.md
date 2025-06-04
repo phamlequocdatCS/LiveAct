@@ -2,6 +2,10 @@
 
 LiveAct is a demonstration project for a lip-syncing API that uses a Generative AI model (MuseTalk) to animate a speaking person from an audio file and a person's image. It provides a WebSocket endpoint for interaction.
 
+![alt text](assets/image.png)
+
+Gradio UI
+
 - [LiveAct](#liveact)
   - [Objective](#objective)
   - [System Overview](#system-overview)

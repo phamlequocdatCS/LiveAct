@@ -67,7 +67,7 @@ RUN --mount=type=cache,target=${UV_CACHE_DIR} \
 # Now, use `mim` to install the MMLab packages.
 # `mim` will automatically find the correct pre-built wheels for the installed PyTorch and CUDA versions,
 # avoiding the problematic source compilation.
-RUN mim install mmengine "mmcv>=2.0.1" "mmdet>=3.1.0" "mmpose>=1.1.0"
+RUN mim install mmengine "mmcv==2.0.1" "mmdet==3.1.0" "mmpose==1.1.0"
 
 # Copy the application source code and model download script
 COPY . .

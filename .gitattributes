@@ -1,0 +1,4 @@
+# Ensure Python files and Markdown use LF in the repository
+*.py eol=lf
+*.md eol=lf
+Dockerfile eol=lf

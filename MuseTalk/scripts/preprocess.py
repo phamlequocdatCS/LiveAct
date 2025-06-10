@@ -6,7 +6,7 @@ from typing import Tuple, List, Union
 import decord
 import json
 import cv2
-from musetalk.utils.face_detection import FaceAlignment,LandmarksType
+from MuseTalk.musetalk.utils.face_detection import FaceAlignment,LandmarksType
 from mmpose.apis import inference_topdown, init_model
 from mmpose.structures import merge_data_samples
 import torch

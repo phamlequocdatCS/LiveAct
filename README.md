@@ -89,6 +89,9 @@ The system relies on several pretrained models, primarily for the MuseTalk pipel
 The server application is designed to run inside a Docker container.
 
 ```bash
+# 0. Clone the repo
+git clone https://github.com/phamlequocdatCS/LiveAct
+
 # 1. Build the docker image
 docker build -t musetalk-batch-api .
 
@@ -112,7 +115,16 @@ docker stop musetalk-api-test
 docker builder prune
 ```
 
+After starting the container, the API server will be accessible at `ws://localhost:8000/ws/lipsync/batch` and a simple HTML test page at `http://localhost:8000/`.
+
 ## NVIDIA GPU Drivers Setup
+
+To run with GPU, you need to install the NVIDIA GPU Driver
+
+1. Provision a Server: Get a Linux server with a compatible NVIDIA GPU.
+2. Install NVIDIA Driver: Install the appropriate NVIDIA kernel driver for the GPU on the server's operating system.
+3. Install Docker Engine: Install the Docker daemon on the server.
+4. Install NVIDIA Container Toolkit
 
 ```bash
 curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
@@ -135,8 +147,6 @@ sudo systemctl restart docker # Or service docker restart
 # Test driver install
 docker run --rm --gpus all nvidia/cuda:11.8.0-runtime-ubuntu22.04 nvidia-smi
 ```
-
-After starting the container, the API server will be accessible at `ws://localhost:8000/ws/lipsync/batch` and a simple HTML test page at `http://localhost:8000/`.
 
 ## Client Setup (Local)
 

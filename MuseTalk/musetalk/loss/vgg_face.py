@@ -6,7 +6,7 @@ import torch
 import torch.nn.functional as F
 import torch.utils.model_zoo
 import pickle
-from musetalk.loss import resnet as ResNet
+from MuseTalk.musetalk.loss import resnet as ResNet
 
 
 MODEL_URL = "https://github.com/claudio-unipv/vggface-pytorch/releases/download/v0.1/vggface-9d491dd7c30312.pth"

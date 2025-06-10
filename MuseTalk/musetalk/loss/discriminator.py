@@ -1,7 +1,7 @@
 from torch import nn
 import torch.nn.functional as F
 import torch
-from musetalk.loss.vgg_face import ImagePyramide
+from MuseTalk.musetalk.loss.vgg_face import ImagePyramide
 
 class DownBlock2d(nn.Module):
     """

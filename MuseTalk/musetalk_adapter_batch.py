@@ -17,11 +17,11 @@ if MUSE_TALK_ROOT_DIR not in sys.path:
     sys.path.insert(0, MUSE_TALK_ROOT_DIR)
 
 # Assume all internal MuseTalk library imports are now fixed to use absolute paths
-from musetalk.utils.blending import get_image
-from musetalk.utils.face_parsing import FaceParsing # Only for type hinting if needed here
-from musetalk.utils.audio_processor import AudioProcessor # Only for type hinting if needed here
-from musetalk.utils.utils import get_file_type, get_video_fps, datagen, load_all_model
-from musetalk.utils.preprocessing import get_landmark_and_bbox, read_imgs, coord_placeholder
+from MuseTalk.musetalk.utils.blending import get_image
+from MuseTalk.musetalk.utils.face_parsing import FaceParsing # Only for type hinting if needed here
+from MuseTalk.musetalk.utils.audio_processor import AudioProcessor # Only for type hinting if needed here
+from MuseTalk.musetalk.utils.utils import get_file_type, get_video_fps, datagen, load_all_model
+from MuseTalk.musetalk.utils.preprocessing import get_landmark_and_bbox, read_imgs, coord_placeholder
 from transformers import WhisperModel # Only for type hinting if needed here
 
 class MuseTalkBatchGenerator: # Renamed class

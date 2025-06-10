@@ -5,7 +5,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn, optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from musetalk.loss.discriminator import MultiScaleDiscriminator,DiscriminatorFullModel
+from MuseTalk.musetalk.loss.discriminator import MultiScaleDiscriminator,DiscriminatorFullModel
 import musetalk.loss.vgg_face as vgg_face
 
 class Interpolate(nn.Module):

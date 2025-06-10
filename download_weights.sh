@@ -23,14 +23,15 @@ mkdir -p "$MODEL_BASE_DIR/musetalk" \
 # Set HuggingFace mirror endpoint
 export HF_ENDPOINT=https://hf-mirror.com
 
+# Skip V1.0
 # Download MuseTalk V1.0 weights
 # Files like "musetalk/pytorch_model.bin" from repo will go into $MODEL_BASE_DIR/musetalk/pytorch_model.bin
 # e.g., MuseTalk/models/musetalk/pytorch_model.bin
-echo "Downloading TMElyralab/MuseTalk V1.0 weights..."
-huggingface-cli download TMElyralab/MuseTalk \
-  --local-dir "$MODEL_BASE_DIR" \
-  --include "musetalk/musetalk.json" "musetalk/pytorch_model.bin" \
-  --cache-dir "/app/.hf_cache" # Explicit cache dir for consistency
+# echo "Downloading TMElyralab/MuseTalk V1.0 weights..."
+# huggingface-cli download TMElyralab/MuseTalk \
+#   --local-dir "$MODEL_BASE_DIR" \
+#   --include "musetalk/musetalk.json" "musetalk/pytorch_model.bin" \
+#   --cache-dir "/app/.hf_cache" # Explicit cache dir for consistency
 
 # Download MuseTalk V1.5 weights
 # Files like "musetalkV15/unet.pth" from repo will go into $MODEL_BASE_DIR/musetalkV15/unet.pth

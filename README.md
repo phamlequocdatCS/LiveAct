@@ -91,6 +91,7 @@ The server application is designed to run inside a Docker container.
 ```bash
 # 0. Clone the repo
 git clone https://github.com/phamlequocdatCS/LiveAct
+cd LiveAct
 
 # 1. Build the docker image
 docker build -t musetalk-batch-api .

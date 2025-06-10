@@ -11,8 +11,8 @@ import shutil
 import os.path as osp
 
 # --- Add these imports if they are not already at the top ---
-from MuseTalk.musetalk.models.vae import VAE
-from MuseTalk.musetalk.models.unet import UNet,PositionalEncoding
+from MuseTalk.musetalk.musetalk_models.vae import VAE
+from MuseTalk.musetalk.musetalk_models.unet import UNet,PositionalEncoding
 # --- End imports ---
 
 

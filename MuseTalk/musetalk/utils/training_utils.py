@@ -11,7 +11,7 @@ from diffusers.optimization import get_scheduler
 from omegaconf import OmegaConf
 from einops import rearrange
 
-from MuseTalk.musetalk.models.syncnet import SyncNet
+from MuseTalk.musetalk.musetalk_models.syncnet import SyncNet
 from MuseTalk.musetalk.loss.discriminator import MultiScaleDiscriminator, DiscriminatorFullModel
 from MuseTalk.musetalk.loss.basic_loss import Interpolate
 import musetalk.loss.vgg_face as vgg_face
